@@ -18,19 +18,35 @@ You can gather information about the following:
 To use this script, you have to first set it up. Begin by running the following:
 
     ```bash
-    git clone https://github.com/uzziellite/wordpress-spy-tools.git
+        git clone https://github.com/uzziellite/wordpress-spy-tools.git
     ```
-Then create a virtual environment for running your python script
+Then CD into this directory and create a virtual environment for running your python script
 
     ```bash
-    cd 
-    python3 -m venv venv
+        python3 -m venv venv
+        pip3 install -r requirements.txt
     ```
 
 ## Usage
 
 This script is subdivided into several parts depending on the information that is needed.
 
-### Acquiring Domain Information
+1. To acquire domain info
 
-To acquire
+        ```bash
+            python3 domain_scanner.py
+        ```
+
+2. To scan for plugins
+
+        ```bash
+            python3 plugins.py [url] [wordlist] --workers 10 --timeout 10 --no-verify-ssl --retries 3 --log-file [path_to_log_file]
+        ```
+
+        Example
+
+        ```bash
+            python3 plugins.py https://example.com ./data/wp-plugins.fuzz.txt --workers 10 --timeout 10 --no-verify-ssl --retries 3 --log-file ./url_checker.log
+        ```
+
+This guide may still contain errors
