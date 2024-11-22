@@ -329,6 +329,9 @@ class AdvancedDomainSecurityAnalyzer:
         # DNS Records
         print("DNS Records:")
         dns_records = self.get_dns_records()
+        for row in dns_records:
+            for key in row:
+                row[key] = "\n".join(textwrap.wrap(str(row[key]), width=40))
         print(tabulate(dns_records, headers='keys', tablefmt='grid'))
         print("\n")
         
