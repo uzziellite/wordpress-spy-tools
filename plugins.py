@@ -64,7 +64,7 @@ class URLChecker:
         retry_strategy = Retry(
             total=max_retries,
             backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
+            status_forcelist=[501, 502, 503, 504],
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
         self.session.mount("http://", adapter)
@@ -168,6 +168,7 @@ def display_results_table(results):
             301: "yellow",
             302: "yellow",
             403: "red",
+            500: "red",
             None: "red"
         }.get(status_code, "white")
         
@@ -210,80 +211,80 @@ def extract_readme_info(checker, plugin_slug):
         logging.error(f"Error fetching readme for {plugin_slug}: {str(e)}")
     return None
 
-def process_urls(checker, file_path, max_workers=10):
-    """Process URLs concurrently using a ThreadPoolExecutor with a growing results table"""
-    global executor, progress_bar
+def process_urls(checker, file_path, max_workers=10,deep_check=False):
+    """Process URLs concurrently with additional plugin availability check"""
     results = []
-    
-    # Create a single table to be updated
     table = Table(title="Plugins Discovered", box=box.ROUNDED)
     table.add_column("Plugin Name", style="cyan")
     table.add_column("Status", style="bold")
     table.add_column("Response Time", justify="right")
     table.add_column("Plugin Version", style="magenta")
-    
+
     try:
         with open(file_path, 'r') as file:
             paths = [line.strip() for line in file if line.strip()]
-        
+
         url_data = [(checker.base_url, path) for path in paths]
-        
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
-            executor = ex
             futures = {ex.submit(checker.check_url, data): data for data in url_data}
-            
+
             with tqdm(total=len(futures), desc="Searching Plugins: ", unit="url") as pbar:
-                progress_bar = pbar
-                
                 for future in concurrent.futures.as_completed(futures):
                     if exit_event.is_set():
                         break
-                    
+
                     try:
                         result = future.result()
-                        if result is not None and result['status_code'] != 404:
-                            # Determine status style
+                        
+                        # If 404, attempt secondary check via readme.txt
+                        if result['status_code'] == 404 and deep_check:
+                            plugin_name = extract_plugin_name(result['url'])
+                            readme_url = f"{checker.base_url}/wp-content/plugins/{plugin_name}/readme.txt"
+                            readme_result = requests.head(readme_url)
+                            
+                            # If readme exists, consider plugin potentially available
+                            if readme_result.status_code in [200,403]:
+                                result['status_code'] = readme_result.status_code
+                        
+                        # Process results similar to original function
+                        if result['status_code'] != 404:
                             status_style = {
                                 200: "green",
-                                301: "yellow",
+                                301: "yellow", 
                                 302: "yellow",
                                 403: "red",
+                                500: "red",
                                 None: "red"
                             }.get(result['status_code'], "white")
-                            
-                            # Prepare status text
-                            status = str(result['status_code']) if result['status_code'] else f"Error: {result['error']}"
-                            
-                            # Extract plugin name
-                            plugin_name = extract_plugin_name(result['url'])
 
-                            # Get plugin version info
+                            status = str(result['status_code']) if result['status_code'] else f"Error: {result['error']}"
+                            plugin_name = extract_plugin_name(result['url'])
                             version_info = extract_readme_info(checker, plugin_name)
                             plugin_version = f"{version_info['stable_tag']} (Tested: {version_info['tested_up']})" if version_info else "Hidden"
 
-                            
-                            # Add row to the table
                             table.add_row(
                                 plugin_name,
                                 Text(status, style=status_style),
                                 f"{result['response_time']:.3f}s",
                                 plugin_version
                             )
-                            
-                            # Clear console and reprint the entire updated table
+
                             console.clear()
                             console.print(table)
-                            
+
                             results.append(result)
+                        
                         pbar.update(1)
+
                     except Exception as e:
                         logging.error(f"Error processing URL: {str(e)}")
                         pbar.update(1)
                         continue
-    
+
     except KeyboardInterrupt:
         signal_handler(signal.SIGINT, None)
-    
+
     return results
 
 def main():
@@ -305,6 +306,8 @@ def main():
     parser.add_argument('--output', help='Output file name for export')
     parser.add_argument('--log-file', default='url_checker.log',
                         help='Log file path (default: url_checker.log)')
+    parser.add_argument('-d', '--deep', action='store_true',
+                        help='Enable deep check for plugins. Scan will be slower though')
     
     try:
         args = parser.parse_args()
@@ -329,7 +332,7 @@ def main():
             verify_ssl=not args.no_verify_ssl
         )
         
-        results = process_urls(checker, file_path, args.workers)
+        results = process_urls(checker, file_path, args.workers,deep_check=args.deep)
         
         if not exit_event.is_set():
             display_results_table(results)
