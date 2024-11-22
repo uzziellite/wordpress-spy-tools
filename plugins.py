@@ -288,9 +288,9 @@ def process_urls(checker, file_path, max_workers=10,deep_check=False):
     return results
 
 def main():
-    parser = argparse.ArgumentParser(description='Concurrent URL Status Checker')
-    parser.add_argument('base_url', help='Base URL to prepend to paths')
-    parser.add_argument('file_path', help='Path to file containing URL paths')
+    parser = argparse.ArgumentParser(description='Wordpress Plugins Scanner')
+    parser.add_argument('base_url', help='The main WordPress site to scan plugins')
+    parser.add_argument('file_path', help='Path to the main wordlist containing WordPress plugin names')
     parser.add_argument('-w', '--workers', type=int, default=10, 
                         help='Number of concurrent workers (default: 10)')
     parser.add_argument('-t', '--timeout', type=int, default=10,
