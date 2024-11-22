@@ -31,6 +31,12 @@ Then CD into this directory and create a virtual environment for running your py
 
 This script is subdivided into several parts depending on the information that is needed.
 
+Learn how to use this tool
+
+    ```bash
+    python3 plugins.py -h
+    ```
+
 1. To acquire domain info
 
         ```bash
