@@ -183,6 +183,33 @@ def display_results_table(results):
     
     console.print(table)
 
+def extract_readme_info(checker, plugin_slug):
+    """
+    Extract version information from readme.txt
+    
+    Args:
+        checker: URL checker object
+        plugin_slug: Plugin directory name
+    
+    Returns:
+        dict with version information or None
+    """
+    readme_url = f"{checker.base_url}/wp-content/plugins/{plugin_slug}/readme.txt"
+    try:
+        response = checker.session.get(readme_url, timeout=5)
+        if response.status_code == 200:
+            # Use regex to extract Stable tag and Tested up to
+            stable_tag_match = re.search(r'Stable tag:\s*(\d+(?:\.\d+)*)', response.text)
+            tested_up_match = re.search(r'Tested up to:\s*(\d+(?:\.\d+)*)', response.text)
+            
+            return {
+                'stable_tag': stable_tag_match.group(1) if stable_tag_match else 'N/A',
+                'tested_up': tested_up_match.group(1) if tested_up_match else 'N/A'
+            }
+    except Exception as e:
+        logging.error(f"Error fetching readme for {plugin_slug}: {str(e)}")
+    return None
+
 def process_urls(checker, file_path, max_workers=10):
     """Process URLs concurrently using a ThreadPoolExecutor with a growing results table"""
     global executor, progress_bar
@@ -193,7 +220,7 @@ def process_urls(checker, file_path, max_workers=10):
     table.add_column("Plugin Name", style="cyan")
     table.add_column("Status", style="bold")
     table.add_column("Response Time", justify="right")
-    table.add_column("Redirect URL", style="magenta")
+    table.add_column("Plugin Version", style="magenta")
     
     try:
         with open(file_path, 'r') as file:
@@ -229,13 +256,18 @@ def process_urls(checker, file_path, max_workers=10):
                             
                             # Extract plugin name
                             plugin_name = extract_plugin_name(result['url'])
+
+                            # Get plugin version info
+                            version_info = extract_readme_info(checker, plugin_name)
+                            plugin_version = f"{version_info['stable_tag']} (Tested: {version_info['tested_up']})" if version_info else "Hidden"
+
                             
                             # Add row to the table
                             table.add_row(
                                 plugin_name,
                                 Text(status, style=status_style),
                                 f"{result['response_time']:.3f}s",
-                                result['redirect_url'] or ""
+                                plugin_version
                             )
                             
                             # Clear console and reprint the entire updated table
