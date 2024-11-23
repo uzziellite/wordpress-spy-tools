@@ -12,6 +12,11 @@ import sys
 import logging
 import random
 import textwrap
+from bs4 import BeautifulSoup
+import concurrent.futures
+from urllib.parse import urljoin
+import re
+from helpers.SchemeValidator import SchemeValidator
 
 # Configure logging
 logging.basicConfig(
@@ -31,6 +36,7 @@ class AdvancedDomainSecurityAnalyzer:
         :param end_port: Ending port of the scan range (default 1000)
         :param verbose: Enable detailed logging
         """
+
         try:
             # Initial startup logging
             logger.info(f"🔍 Initializing Domain Security Analysis")
@@ -39,6 +45,11 @@ class AdvancedDomainSecurityAnalyzer:
             # Resolve IP
             logger.info(f"🌐 Resolving domain IP...")
             self.domain = domain
+
+            # Convert the domain properly to http or https
+            self._ensure_scheme = SchemeValidator()._ensure_scheme
+
+            self.url = self._ensure_scheme(domain)
             self.ip_address = socket.gethostbyname(domain)
             print("\n")
             logger.info(f"✅ Domain IP resolved: {self.ip_address}")
@@ -48,6 +59,26 @@ class AdvancedDomainSecurityAnalyzer:
             self.end_port = end_port
             self.verbose = verbose
             self.vulnerabilities = []
+            
+            self.user_agents = [
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:89.0) Gecko/20100101 Firefox/89.0'
+            ]
+
+            self.spoofed_header = {
+                'User-Agent': random.choice(self.user_agents),
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Referer': self.domain,
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
+            }
+
+            self.version_findings = []
             
             # Suppress warnings
             warnings.filterwarnings('ignore', message='Unverified HTTPS request')
@@ -59,7 +90,7 @@ class AdvancedDomainSecurityAnalyzer:
         except Exception as e:
             logger.error(f"❌ Initialization error: {e}")
             sys.exit(1)
-
+        
     def advanced_port_scan(self):
         """
         Perform advanced port scanning with optimized performance
@@ -132,6 +163,139 @@ class AdvancedDomainSecurityAnalyzer:
 
         return dns_records
     
+    def check_meta_generator(self):
+        """Check WordPress version in meta generator tag"""
+        try:
+            response = requests.get(self.url, headers=self.spoofed_header, timeout=10)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            generator = soup.find('meta', {'name': 'generator'})
+            if generator and 'WordPress' in generator.get('content', ''):
+                version = re.search(r'WordPress (\d+\.\d+\.?\d*)', generator.get('content', ''))
+                if version:
+                    self.version_findings.append(('Meta Generator', version.group(1)))
+        except Exception as e:
+            self.version_findings.append(('Meta Generator Error', str(e)))
+
+    def check_feed_links(self):
+        """Check WordPress version in RSS/Atom feeds"""
+        feed_paths = ['/feed/', '/feed/rss/', '/feed/atom/', '/rss.xml', '/atom.xml']
+        found_version = False
+        
+        for path in feed_paths:
+            try:
+                feed_url = urljoin(self.url, path)
+                response = requests.get(feed_url, headers=self.spoofed_header, timeout=10)
+                if 'WordPress' in response.text:
+                    version = re.search(r'WordPress/(\d+\.\d+\.?\d*)', response.text)
+                    if version:
+                        self.version_findings.append(('Feed Link', version.group(1)))
+                        found_version = True
+                        break
+            except:
+                continue
+        
+        # Always append a result, even if no version found
+        if not found_version:
+            self.version_findings.append(('Feed Link', 'Not Found'))
+
+    def check_readme(self):
+        """Check WordPress version in readme.html"""
+        try:
+            readme_url = urljoin(self.url, 'readme.html')
+            response = requests.get(readme_url, headers=self.spoofed_header, timeout=10)
+            if response.status_code == 200:
+                version = re.search(r'Version (\d+\.\d+\.?\d*)', response.text)
+                if version:
+                    self.version_findings.append(('Readme.html', version.group(1)))
+                else:
+                    self.version_findings.append(('Readme.html', 'No Version Found'))
+            else:
+                self.version_findings.append(('Readme.html', 'File Not Accessible'))
+        except Exception as e:
+            self.version_findings.append(('Readme.html', 'Error Accessing File'))
+
+
+    def check_asset_versions(self):
+        """Check WordPress version in CSS and JS files"""
+        try:
+            response = requests.get(self.url, headers=self.spoofed_header, timeout=10)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Check CSS files
+            for css in soup.find_all('link', rel='stylesheet'):
+                if 'ver=' in css.get('href', ''):
+                    version = re.search(r'ver=(\d+\.\d+\.?\d*)', css.get('href', ''))
+                    if version:
+                        self.version_findings.append(('CSS Asset', version.group(1)))
+                        break
+
+            # Check JS files
+            for js in soup.find_all('script', src=True):
+                if 'ver=' in js.get('src', ''):
+                    version = re.search(r'ver=(\d+\.\d+\.?\d*)', js.get('src', ''))
+                    if version:
+                        self.version_findings.append(('JS Asset', version.group(1)))
+                        break
+        except Exception as e:
+            self.version_findings.append(('Asset Check Error', str(e)))
+
+    def check_install_file(self):
+        """Check WordPress version from install.php file"""
+        try:
+            install_url = urljoin(self.url, 'wp-admin/install.php')
+            response = requests.get(install_url, headers=self.spoofed_header, timeout=10)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            version_found = False
+            # Check HTML Of install.php
+            for css in soup.find_all('link', rel='stylesheet'):
+                if 'ver=' in css.get('href', ''):
+                    version = re.search(r'ver=(\d+\.\d+\.?\d*)', css.get('href', ''))
+                    if version:
+                        self.version_findings.append(('Install File', version.group(1)))
+                        version_found = True
+                        break
+            
+            if not version_found:
+                self.version_findings.append(('Install File', 'No Version Found'))
+                        
+        except Exception as e:
+            self.version_findings.append(('Install File', 'Error Accessing File'))
+
+    def run_all_wp_version_checks(self):
+        """Run all version detection methods concurrently"""
+        # Create a list to store futures
+        futures = []
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            checks = [
+                self.check_install_file,
+                self.check_meta_generator,
+                self.check_feed_links,
+                self.check_readme,
+                self.check_asset_versions
+            ]
+            
+            # Submit all tasks and store futures
+            for check in checks:
+                futures.append(executor.submit(check))
+            
+            # Wait for all futures to complete
+            concurrent.futures.wait(futures)
+        
+        return self.compile_report()
+    
+    def compile_report(self):
+        """Compile findings into a structured report"""
+        report = {
+            'url': self.url,
+            'findings': self.version_findings,
+            'detected_versions': set(version for method, version in self.version_findings 
+                                  if isinstance(version, str) and version[0].isdigit()),
+            'total_detection_methods': len(self.version_findings)
+        }
+        return report
+    
     def check_cors_configuration(self, headers):
         """
         Check CORS (Cross-Origin Resource Sharing) configuration
@@ -195,30 +359,12 @@ class AdvancedDomainSecurityAnalyzer:
         try:
             # Prepare URL
             url = f"https://{self.domain}"
-
-            user_agents = [
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
-                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:89.0) Gecko/20100101 Firefox/89.0'
-            ]
-            
-            spoofed_header = {
-                'User-Agent': random.choice(user_agents),
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Referer': url,
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
-            }
             
             # Disable SSL verification warnings (use cautiously)
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             
             # Send request with minimal timeout
-            response = requests.get(url, timeout=30, verify=False, headers=spoofed_header)
+            response = requests.get(url, timeout=30, verify=False, headers=self.spoofed_header)
             
             # Collect headers
             headers = response.headers
@@ -333,6 +479,18 @@ class AdvancedDomainSecurityAnalyzer:
             for key in row:
                 row[key] = "\n".join(textwrap.wrap(str(row[key]), width=40))
         print(tabulate(dns_records, headers='keys', tablefmt='grid'))
+        print("\n")
+
+        #Wordpress Version
+        wp_version_report = self.run_all_wp_version_checks()
+        print("\n=== WordPress Version Detection Report ===")
+        print(f"Target URL: {wp_version_report['url']}")
+        print("\nDetection Methods Results:")
+        for method, version in wp_version_report['findings']:
+            print(f"- {method}: {version}")
+        
+        print("\nUnique Versions Detected:", ', '.join(wp_version_report['detected_versions']) if wp_version_report['detected_versions'] else "None")
+        print(f"Total Detection Methods Tried: {wp_version_report['total_detection_methods']}")
         print("\n")
         
         # Header Analysis
