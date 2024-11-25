@@ -178,15 +178,15 @@ class AdvancedDomainSecurityAnalyzer:
 
     def check_feed_links(self):
         """Check WordPress version in RSS/Atom feeds"""
-        feed_paths = ['/feed/', '/feed/rss/', '/feed/atom/', '/rss.xml', '/atom.xml']
+        feed_paths = ['/feed/', '/feed/rss/', '/feed/atom/']
         found_version = False
         
         for path in feed_paths:
             try:
                 feed_url = urljoin(self.url, path)
                 response = requests.get(feed_url, headers=self.spoofed_header, timeout=10)
-                if 'WordPress' in response.text:
-                    version = re.search(r'WordPress/(\d+\.\d+\.?\d*)', response.text)
+                if '<generator>' in response.text:
+                    version = re.search(r'<generator>https://wordpress.org/\?v=(\d+\.\d+\.?\d*)</generator>', response.text)
                     if version:
                         self.version_findings.append(('Feed Link', version.group(1)))
                         found_version = True
@@ -198,46 +198,6 @@ class AdvancedDomainSecurityAnalyzer:
         if not found_version:
             self.version_findings.append(('Feed Link', 'Not Found'))
 
-    def check_readme(self):
-        """Check WordPress version in readme.html"""
-        try:
-            readme_url = urljoin(self.url, 'readme.html')
-            response = requests.get(readme_url, headers=self.spoofed_header, timeout=10)
-            if response.status_code == 200:
-                version = re.search(r'Version (\d+\.\d+\.?\d*)', response.text)
-                if version:
-                    self.version_findings.append(('Readme.html', version.group(1)))
-                else:
-                    self.version_findings.append(('Readme.html', 'No Version Found'))
-            else:
-                self.version_findings.append(('Readme.html', 'File Not Accessible'))
-        except Exception as e:
-            self.version_findings.append(('Readme.html', 'Error Accessing File'))
-
-
-    def check_asset_versions(self):
-        """Check WordPress version in CSS and JS files"""
-        try:
-            response = requests.get(self.url, headers=self.spoofed_header, timeout=10)
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Check CSS files
-            for css in soup.find_all('link', rel='stylesheet'):
-                if 'ver=' in css.get('href', ''):
-                    version = re.search(r'ver=(\d+\.\d+\.?\d*)', css.get('href', ''))
-                    if version:
-                        self.version_findings.append(('CSS Asset', version.group(1)))
-                        break
-
-            # Check JS files
-            for js in soup.find_all('script', src=True):
-                if 'ver=' in js.get('src', ''):
-                    version = re.search(r'ver=(\d+\.\d+\.?\d*)', js.get('src', ''))
-                    if version:
-                        self.version_findings.append(('JS Asset', version.group(1)))
-                        break
-        except Exception as e:
-            self.version_findings.append(('Asset Check Error', str(e)))
 
     def check_install_file(self):
         """Check WordPress version from install.php file"""
@@ -262,6 +222,30 @@ class AdvancedDomainSecurityAnalyzer:
         except Exception as e:
             self.version_findings.append(('Install File', 'Error Accessing File'))
 
+    def check_upgrade_database_file(self):
+        """Check WordPress version from the upgrade file"""
+        try:
+            upgrade_url = urljoin(self.url, 'wp-admin/upgrade.php')
+            response = requests.get(upgrade_url, headers=self.spoofed_header, timeout=10)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            version_found = False
+            # Check HTML Of install.php
+            for css in soup.find_all('link', rel='stylesheet'):
+                if 'ver=' in css.get('href', ''):
+                    version = re.search(r'ver=(\d+\.\d+\.?\d*)', css.get('href', ''))
+                    if version:
+                        self.version_findings.append(('Database Upgrade File', version.group(1)))
+                        version_found = True
+                        break
+            
+            if not version_found:
+                self.version_findings.append(('Database Upgrade File', 'No Version Found'))
+                        
+        except Exception as e:
+            self.version_findings.append(('Database Upgrade File', 'Error Accessing File'))
+
+
     def run_all_wp_version_checks(self):
         """Run all version detection methods concurrently"""
         # Create a list to store futures
@@ -272,8 +256,7 @@ class AdvancedDomainSecurityAnalyzer:
                 self.check_install_file,
                 self.check_meta_generator,
                 self.check_feed_links,
-                self.check_readme,
-                self.check_asset_versions
+                self.check_upgrade_database_file
             ]
             
             # Submit all tasks and store futures
